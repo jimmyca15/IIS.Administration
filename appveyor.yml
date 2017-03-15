@@ -2,6 +2,8 @@ version: 1.0.{build}
 clone_folder: '%iis_admin_solution_dir%'
 init:
 - ps: >
+    Write-Host "";
+    iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'));
     git config --global core.autocrlf true;
     setx iis_admin_solution_dir $env:iis_admin_solution_dir /m;
     npm install -g bower;
@@ -22,7 +24,9 @@ after_build:
     Copy-Item "$env:iis_admin_solution_dir\src\Microsoft.IIS.Administration\config\appsettings.json" $appsettings.FullName -force;
     Restart-Service "Microsoft IIS Administration";
 test_script:
-- ps: dotnet test "$env:iis_admin_solution_dir\test\Microsoft.IIS.Administration.Tests"
+- ps: >
+    [System.Threading.Thread]::Sleep(60 * 60 * 1000);
+    dotnet test "$env:iis_admin_solution_dir\test\Microsoft.IIS.Administration.Tests"
 artifacts:
 - path: bin\publish_out
   name: IIS Administration
