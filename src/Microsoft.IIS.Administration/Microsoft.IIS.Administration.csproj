@@ -55,12 +55,4 @@
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="4.1.0" />
   </ItemGroup>
 
-  <Target Name="PostcompileScript" AfterTargets="Build">
-    <Exec Command="bower install" />
-  </Target>
-
-  <Target Name="PrepublishScript" BeforeTargets="PrepareForPublish">
-    <Exec Command="bower install" />
-  </Target>
-
 </Project>
