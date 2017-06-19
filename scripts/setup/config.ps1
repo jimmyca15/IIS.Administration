@@ -8,8 +8,9 @@ Param (
                  "Remove",
                  "Exists",
                  "Get-UserFileMap",
+                 "Write-AppSettings",
+                 "Migrate-AppSettings",
                  "Write-Config",
-                 "Write-AppHost",
                  "Get-AppHostPort")]
     [string]
     $Command,
@@ -40,7 +41,15 @@ Param (
     
     [parameter()]
     [int]
-    $Port
+    $Port,
+    
+    [parameter()]
+    [string]
+    $Source,
+    
+    [parameter()]
+    [string]
+    $Destination
 )
 
 # Name of file we place installation data in
@@ -50,10 +59,8 @@ $IISAdminSiteName = "IISAdmin"
 # Returns a map of the files that contain user configurable settings.
 function Get-UserFileMap {
     return @{
-        "applicationHost.config" = "host/applicationHost.config"
-        "web.config" = "Microsoft.IIS.administration/web.config"
         "modules.json" = "Microsoft.IIS.administration/config/modules.json"
-        "config.json" = "Microsoft.IIS.administration/config/appsettings.json"
+        "appsettings.json" = "Microsoft.IIS.administration/config/appsettings.json"
         "api-keys.json" = "Microsoft.IIS.administration/config/api-keys.json"
     }
 }
@@ -108,6 +115,44 @@ function Remove($_path) {
     }
 }
 
+# Writes install time information into the appsettings.json file
+# AppSettingsPath: The full path to the appsettings.json file
+function Write-AppSettings($_appSettingsPath) {
+    if ([string]::IsNullOrEmpty($_appSettingsPath)) {
+        throw "AppSettingsPath required."
+    }
+    if (-not(Test-Path $_appSettingsPath)) {
+        throw "appsettings.json not found at $_appsettingsPath"
+    }
+
+    $settings = .\json.ps1 Get-JsonContent -Path $_appSettingsPath
+
+    $settings.security.users.administrators += $(.\security.ps1 CurrentAdUser)
+    $settings.security.users.owners += $(.\security.ps1 CurrentAdUser)
+
+    .\json.ps1 Set-JsonContent -Path $AppSettingsPath -JsonObject $settings
+}
+
+# Migrates the appsettings configuration from one installation to the other, performing any transforms if necessary
+# Source: The source installation path, Ex: C:\Program Files\IIS Administration\1.1.1
+# Destination: The destination installation path, Ex: C:\Program Files\IIS Administration\2.0.0
+function Migrate-AppSettings($_source, $_destination) {
+    $userFiles = .\config.ps1 Get-UserFileMap
+
+    $oldAppSettings = .\json.ps1 Get-JsonContent -Path $(Join-Path $Source $userFiles["appsettings.json"])
+    $newAppSettings = .\json.ps1 Get-JsonContent -Path $(Join-Path $Destination $userFiles["appsettings.json"])
+
+    if ($oldAppSettings.security -eq $null) {
+        $oldAppSettings = .\json.ps1 Add-Property -JsonObject $oldAppSettings -Name "security" -Value $newAppSettings.security
+    }
+
+    if ($oldAppSettings.administrators -ne $null) {
+        $oldAppSettings = .\json.ps1 Remove-Property -JsonObject $oldAppSettings -Name "administrators"
+    }
+
+    .\json.ps1 Set-JsonContent -Path $(Join-Path $Destination $userFiles["appsettings.json"]) -JsonObject $oldAppSettings
+}
+
 # Writes the provided object into a setup configuration at the specified path.
 # ConfigObject: The object to write into the setup configuration.
 # Path: The path to a directory to hold the setup configuration.
@@ -141,59 +186,6 @@ function Write-Config($obj, $_path) {
     $ms.Dispose()
 
     .\files.ps1 Write-FileForced -Path $(Join-Path $_path $INSTALL_FILE) -Content $content
-}
-
-# Sets the applicationHost.config file to host the Microsoft.IIS.Administration application given the specified settings.
-# AppHostPath: The location of the applicationHost.config file.
-# ApplicationPath: The location of the application to register in the applicationHost.config file.
-# Port: The port to listen on.
-# Version: The version of the application.
-function Write-AppHost($_appHostPath, $_applicationPath, $_port, $_version) {
-
-    if ([string]::IsNullOrEmpty($_appHostPath)) {
-        throw "AppHostPath required."
-    }
-    if ([string]::IsNullOrEmpty($_applicationPath)) {
-        throw "ApplicationPath required."
-    }
-    if ($_port -eq 0) {
-        throw "Port required."
-    }
-
-    $IISAdminPoolName = "IISAdminAppPool" + $_version
-
-    [xml]$xml = Get-Content -Path "$_appHostPath"
-    $xml.configuration."system.applicationHost".applicationPools.Add.name = $IISAdminPoolName
-    $sites = $xml.GetElementsByTagName("site")
-
-    $site = $null;
-    foreach ($s in $sites) {
-    if ($s.name -eq $IISAdminSiteName) { 
-            $site = $s;
-        } 
-    }
-
-    if ($site -eq $null) {
-        throw "Installation applicationHost.config does not contain IISAdmin site"
-    }
-
-    $site.application.SetAttribute("applicationPool", "$IISAdminPoolName")
-    $site.application.virtualDirectory.SetAttribute("physicalPath", "$_applicationPath")
-    $site.bindings.binding.SetAttribute("bindingInformation", "*:$($_port):")
-    
-    $ms = New-Object System.IO.MemoryStream
-    $sw = New-Object System.IO.StreamWriter -ArgumentList $ms
-    $xml.Save($sw) | Out-Null
-
-    $position = $ms.Seek(0, [System.IO.SeekOrigin]::Begin)
-    $sr = New-Object System.IO.StreamReader -ArgumentList $ms
-    $content = $sr.ReadToEnd()
-
-    $sr.Dispose()
-    $sw.Dispose()
-    $ms.Dispose()
-    
-    .\files.ps1 Write-FileForced -Path $_appHostPath -Content $content
 }
 
 # Gets the port that the IIS Administration site is configured to listen on in the applicationHost.config file.
@@ -252,13 +244,17 @@ switch ($Command)
     {
         return Get-UserFileMap
     }
+    "Write-AppSettings"
+    {
+        Write-AppSettings $AppSettingsPath
+    }
+    "Migrate-AppSettings"
+    {
+        Migrate-AppSettings $Source $Destination
+    }
     "Write-Config"
     {
         Write-Config $ConfigObject $Path
-    }
-    "Write-AppHost"
-    {
-        Write-AppHost $AppHostPath $ApplicationPath $Port $Version
     }
     "Get-AppHostPort"
     {
