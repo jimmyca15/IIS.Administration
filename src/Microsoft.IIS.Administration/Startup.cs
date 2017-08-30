@@ -125,7 +125,9 @@ namespace Microsoft.IIS.Administration {
         }
 
         // Configure is called after ConfigureServices is called.
-        public void Configure(IApplicationBuilder app, IHttpContextAccessor contextAccessor) {
+        public void Configure(IApplicationBuilder app,
+            IHttpContextAccessor contextAccessor,
+            IApplicationLifetime applicationLifeTime) {
             //
             // Initialize the Environment
             //
@@ -192,6 +194,10 @@ namespace Microsoft.IIS.Administration {
                 // Ensure routes meant to be extended do not block child routes
                 SortRoutes(routes);
             });
+
+            //
+            // Register for application shutdown
+            applicationLifeTime.ApplicationStopped.Register(() => AdminHost.Instance.StopModules());
         }
 
 
